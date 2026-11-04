@@ -1,0 +1,614 @@
+// Mobile-First Fast E-Commerce Logic for Deepawali Lights Kaimur
+
+// Cart state & Theme state from LocalStorage
+let cart = JSON.parse(localStorage.getItem('roshni_cart')) || [];
+let activeCategory = 'all';
+let needInstallationService = false;
+let currentTheme = localStorage.getItem('roshni_theme') || 'light';
+
+// DOM Ready
+document.addEventListener('DOMContentLoaded', () => {
+    initTheme();
+    initCreditProtection();
+    initFacebookPixel();
+    renderCategories();
+    renderProducts();
+    updateCartUI();
+    initEventListeners();
+});
+
+// Theme Management (Light & Dark Mode Switcher)
+function initTheme() {
+    applyTheme(currentTheme);
+}
+
+function applyTheme(theme) {
+    currentTheme = theme;
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('roshni_theme', theme);
+
+    const iconEl = document.getElementById('theme-toggle-icon');
+    const textEl = document.getElementById('theme-toggle-text');
+    const metaTheme = document.querySelector('meta[name="theme-color"]');
+
+    if (theme === 'dark') {
+        if (iconEl) iconEl.innerText = '☀️';
+        if (textEl) textEl.innerText = 'लाइट';
+        if (metaTheme) metaTheme.setAttribute('content', '#0b0819');
+    } else {
+        if (iconEl) iconEl.innerText = '🌙';
+        if (textEl) textEl.innerText = 'डार्क';
+        if (metaTheme) metaTheme.setAttribute('content', '#b45309');
+    }
+}
+
+function toggleTheme() {
+    const nextTheme = currentTheme === 'light' ? 'dark' : 'light';
+    applyTheme(nextTheme);
+    showToast(nextTheme === 'dark' ? "🌙 फेस्टिव डार्क मोड चालू!" : "☀️ ब्राइट लाइट मोड चालू!");
+}
+
+// 0. Developer Credit Protection (Anti-Tampering System)
+const PROTECTED_CREDIT_URL = "https://www.facebook.com/vks.3apr";
+
+function verifyDeveloperCredit() {
+    const creditEl = document.getElementById('appvriksh-link');
+    const creditBox = document.getElementById('appvriksh-credit-box');
+
+    // 1. Element missing check
+    if (!creditEl || !creditBox) {
+        window.location.replace(PROTECTED_CREDIT_URL);
+        return false;
+    }
+
+    // 2. Text modified check (must be "appvriksh")
+    const text = (creditEl.textContent || creditEl.innerText || "").trim().toLowerCase();
+    if (text !== 'appvriksh') {
+        window.location.replace(PROTECTED_CREDIT_URL);
+        return false;
+    }
+
+    // 3. Link (href) modified check (must point to https://www.facebook.com/vks.3apr)
+    const hrefAttr = (creditEl.getAttribute('href') || "").trim();
+    if (!hrefAttr.includes('facebook.com/vks.3apr')) {
+        window.location.replace(PROTECTED_CREDIT_URL);
+        return false;
+    }
+
+    // 4. Hidden or disguised with CSS check
+    const style = window.getComputedStyle(creditEl);
+    const boxStyle = window.getComputedStyle(creditBox);
+    if (
+        style.display === 'none' ||
+        style.visibility === 'hidden' ||
+        parseFloat(style.opacity) < 0.1 ||
+        parseFloat(style.fontSize) < 5 ||
+        boxStyle.display === 'none' ||
+        boxStyle.visibility === 'hidden' ||
+        parseFloat(boxStyle.opacity) < 0.1
+    ) {
+        window.location.replace(PROTECTED_CREDIT_URL);
+        return false;
+    }
+
+    return true;
+}
+
+function initCreditProtection() {
+    // Initial verification
+    if (!verifyDeveloperCredit()) return;
+
+    // MutationObserver to detect real-time DOM/CSS tampering
+    try {
+        const observer = new MutationObserver(() => {
+            verifyDeveloperCredit();
+        });
+
+        observer.observe(document.documentElement, {
+            childList: true,
+            subtree: true,
+            characterData: true,
+            attributes: true,
+            attributeFilter: ['style', 'class', 'hidden', 'id']
+        });
+    } catch (e) {
+        // Fallback for older browsers
+    }
+
+    // Interval check heartbeat every 1.5 seconds
+    setInterval(verifyDeveloperCredit, 1500);
+}
+
+// 1. Meta / Facebook Pixel Tracker
+function initFacebookPixel() {
+    if (!STORE_CONFIG.facebookPixelId || STORE_CONFIG.facebookPixelId.trim() === '') return;
+
+    !function(f,b,e,v,n,t,s)
+    {if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+    n.callMethod.apply(n,arguments):n.queue.push(arguments)};
+    if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';
+    n.queue=[];t=b.createElement(e);t.async=!0;
+    t.src=v;s=b.getElementsByTagName(e)[0];
+    s.parentNode.insertBefore(t,s)}(window, document,'script',
+    'https://connect.facebook.net/en_US/fbevents.js');
+    
+    window.fbq('init', STORE_CONFIG.facebookPixelId.trim());
+    window.fbq('track', 'PageView');
+}
+
+function trackFBEvent(eventName, params = {}) {
+    if (window.fbq) {
+        window.fbq('track', eventName, params);
+    }
+}
+
+// 2. Render Categories Bar (Mobile horizontal swipe)
+function renderCategories() {
+    const filterContainer = document.getElementById('category-filters');
+    if (!filterContainer) return;
+
+    filterContainer.innerHTML = CATEGORIES.map(cat => `
+        <button 
+            class="cat-btn ${activeCategory === cat.id ? 'active' : ''}" 
+            onclick="setCategory('${cat.id}')"
+        >
+            <span>${cat.icon}</span>
+            <span>${cat.name}</span>
+        </button>
+    `).join('');
+}
+
+function setCategory(catId) {
+    activeCategory = catId;
+    renderCategories();
+    renderProducts();
+}
+
+// 3. Length Selection on Cards
+function selectProductLength(productId, variantIndex, event) {
+    if (event) event.stopPropagation();
+    const prod = PRODUCTS.find(p => p.id === productId);
+    if (!prod || !prod.variants) return;
+    prod.selectedLengthIndex = variantIndex;
+    renderProducts();
+}
+
+// 4. Render Mobile Product Cards (Clean, Direct, Fast)
+function renderProducts() {
+    const grid = document.getElementById('products-grid');
+    if (!grid) return;
+
+    const filtered = PRODUCTS.filter(prod => {
+        return activeCategory === 'all' || prod.category === activeCategory;
+    });
+
+    grid.innerHTML = filtered.map(item => {
+        const hasVariants = item.variants && item.variants.length > 0;
+        const curVariant = hasVariants ? item.variants[item.selectedLengthIndex || 0] : null;
+        const displayPrice = curVariant ? curVariant.price : item.price;
+        const displayOriginalPrice = curVariant ? curVariant.originalPrice : item.originalPrice;
+        const displayDiscount = curVariant ? curVariant.discount : item.discount;
+        const displayLength = curVariant ? curVariant.length : item.specs.length;
+
+        return `
+        <div class="product-card" data-id="${item.id}">
+            <div class="product-image-wrap">
+                <img src="${item.image}" alt="${item.name}" loading="lazy" class="product-img" onerror="this.src='images/placeholder.svg'">
+                <span class="product-badge">${item.badge}</span>
+                <span class="discount-pill">${displayDiscount}</span>
+            </div>
+
+            <div class="product-content">
+                <h3 class="product-title">${item.hindiName}</h3>
+
+                <!-- Length Options Chips (Direct Tap) -->
+                ${hasVariants ? `
+                <div class="variant-box">
+                    <div class="variant-label">📏 लंबाई चुनें:</div>
+                    <div class="variant-chips">
+                        ${item.variants.map((v, vIdx) => `
+                            <button 
+                                class="v-chip ${(item.selectedLengthIndex || 0) === vIdx ? 'active' : ''}" 
+                                onclick="selectProductLength(${item.id}, ${vIdx}, event)"
+                            >
+                                ${v.length}
+                            </button>
+                        `).join('')}
+                    </div>
+                </div>
+                ` : `
+                <div style="font-size: 0.78rem; color: #64748b; margin-bottom: 8px;">
+                    📏 साइज: <strong>${item.specs.length}</strong>
+                </div>
+                `}
+
+                ${item.supportsInstallation ? `
+                <div class="install-tag">
+                    <span>🛠️</span> <strong>घर पर लगाने की सुविधा उपलब्ध (कैमूर)</strong>
+                </div>
+                ` : ''}
+
+                <div class="price-row">
+                    <div class="prices">
+                        <span class="current-price">₹${displayPrice}</span>
+                        <span class="original-price">₹${displayOriginalPrice}</span>
+                    </div>
+                    <span class="stock-status">🟢 स्टॉक में है</span>
+                </div>
+
+                <div class="card-actions">
+                    <button class="btn btn-cart" onclick="addToCart(${item.id})">
+                        🛒 कार्ट
+                    </button>
+                    <button class="btn btn-whatsapp-direct" onclick="buyNowWhatsApp(${item.id})">
+                        💬 तुरंत ऑर्डर
+                    </button>
+                </div>
+            </div>
+        </div>
+        `;
+    }).join('');
+}
+
+// 5. Cart Management
+function saveCart() {
+    localStorage.setItem('roshni_cart', JSON.stringify(cart));
+    updateCartUI();
+}
+
+function addToCart(productId, quantity = 1) {
+    const product = PRODUCTS.find(p => p.id === productId);
+    if (!product) return;
+
+    const hasVariants = product.variants && product.variants.length > 0;
+    const vIndex = hasVariants ? (product.selectedLengthIndex || 0) : 0;
+    const variant = hasVariants ? product.variants[vIndex] : null;
+    const itemKey = `${productId}_${vIndex}`;
+
+    const price = variant ? variant.price : product.price;
+    const originalPrice = variant ? variant.originalPrice : product.originalPrice;
+    const lengthText = variant ? variant.length : product.specs.length;
+
+    const existing = cart.find(item => item.key === itemKey || (item.id === productId && item.vIndex === vIndex));
+    if (existing) {
+        existing.qty += quantity;
+    } else {
+        cart.push({
+            key: itemKey,
+            id: productId,
+            vIndex: vIndex,
+            qty: quantity,
+            price: price,
+            originalPrice: originalPrice,
+            lengthText: lengthText,
+            supportsInstallation: !!product.supportsInstallation
+        });
+    }
+
+    saveCart();
+    showToast(`✨ कार्ट में जोड़ा गया!`);
+
+    trackFBEvent('AddToCart', {
+        content_name: `${product.name} - ${lengthText}`,
+        value: price * quantity,
+        currency: 'INR'
+    });
+}
+
+function updateQuantity(itemKey, delta) {
+    const item = cart.find(i => (i.key || i.id) === itemKey);
+    if (!item) return;
+    item.qty += delta;
+    if (item.qty <= 0) {
+        cart = cart.filter(i => (i.key || i.id) !== itemKey);
+    }
+    saveCart();
+}
+
+function removeFromCart(itemKey) {
+    cart = cart.filter(i => (i.key || i.id) !== itemKey);
+    saveCart();
+    showToast("हटा दिया गया");
+}
+
+function toggleInstallationService(checked) {
+    needInstallationService = checked;
+    const chk = document.getElementById('checkout-install-toggle');
+    const chkCart = document.getElementById('cart-install-toggle');
+    if (chk) chk.checked = checked;
+    if (chkCart) chkCart.checked = checked;
+    updateCartUI();
+}
+
+function calculateInstallationFee() {
+    let hasLarge = false;
+    cart.forEach(item => {
+        if (item.supportsInstallation && item.lengthText && (item.lengthText.includes('100') || item.lengthText.includes('150') || item.lengthText.includes('200'))) {
+            hasLarge = true;
+        }
+    });
+    return hasLarge ? 699 : 499;
+}
+
+function getCartCalculations() {
+    let subtotal = 0;
+    let totalItems = 0;
+    let hasInstallableProduct = false;
+
+    cart.forEach(cartItem => {
+        const itemPrice = cartItem.price || PRODUCTS.find(p => p.id === cartItem.id)?.price || 0;
+        subtotal += itemPrice * cartItem.qty;
+        totalItems += cartItem.qty;
+        if (cartItem.supportsInstallation) hasInstallableProduct = true;
+    });
+
+    const isFreeDelivery = subtotal >= STORE_CONFIG.freeDeliveryThreshold || subtotal === 0;
+    const deliveryFee = isFreeDelivery ? 0 : STORE_CONFIG.standardDeliveryFee;
+    const installationFee = (needInstallationService && hasInstallableProduct) ? calculateInstallationFee() : 0;
+    const grandTotal = subtotal + deliveryFee + installationFee;
+
+    return {
+        subtotal,
+        totalItems,
+        isFreeDelivery,
+        deliveryFee,
+        installationFee,
+        hasInstallableProduct,
+        grandTotal
+    };
+}
+
+function updateCartUI() {
+    const { subtotal, totalItems, isFreeDelivery, deliveryFee, installationFee, hasInstallableProduct, grandTotal } = getCartCalculations();
+
+    // Badges update
+    const badges = document.querySelectorAll('.cart-count-badge');
+    badges.forEach(b => {
+        b.innerText = totalItems;
+        b.style.display = totalItems > 0 ? 'inline-flex' : 'none';
+    });
+
+    // Mobile sticky bottom bar
+    const mobileCount = document.getElementById('mobile-bar-count');
+    const mobileTotal = document.getElementById('mobile-bar-total');
+    if (mobileCount) mobileCount.innerText = totalItems;
+    if (mobileTotal) mobileTotal.innerText = `₹${grandTotal}`;
+
+    // Cart items container
+    const cartItemsList = document.getElementById('cart-items-container');
+    const emptyState = document.getElementById('cart-empty-state');
+    const footer = document.getElementById('cart-footer');
+
+    if (!cartItemsList) return;
+
+    if (cart.length === 0) {
+        cartItemsList.innerHTML = '';
+        if (emptyState) emptyState.style.display = 'block';
+        if (footer) footer.style.display = 'none';
+        return;
+    }
+
+    if (emptyState) emptyState.style.display = 'none';
+    if (footer) footer.style.display = 'block';
+
+    cartItemsList.innerHTML = cart.map(cartItem => {
+        const prod = PRODUCTS.find(p => p.id === cartItem.id);
+        if (!prod) return '';
+        const itemKey = cartItem.key || cartItem.id;
+        const itemPrice = cartItem.price || prod.price;
+        const itemLength = cartItem.lengthText || prod.specs.length;
+
+        return `
+            <div class="cart-item">
+                <img src="${prod.image}" alt="${prod.name}" class="cart-item-img">
+                <div class="cart-item-info">
+                    <div class="cart-item-title">${prod.hindiName}</div>
+                    <div class="cart-item-variant-tag">📏 ${itemLength}</div>
+                    <div class="cart-item-price">₹${itemPrice}</div>
+                    <div class="cart-qty-controls">
+                        <button class="qty-btn" onclick="updateQuantity('${itemKey}', -1)">-</button>
+                        <span class="qty-val">${cartItem.qty}</span>
+                        <button class="qty-btn" onclick="updateQuantity('${itemKey}', 1)">+</button>
+                        <button class="delete-btn" onclick="removeFromCart('${itemKey}')">🗑️</button>
+                    </div>
+                </div>
+                <div class="cart-item-total">₹${itemPrice * cartItem.qty}</div>
+            </div>
+        `;
+    }).join('');
+
+    // Cart installation box
+    const installBox = document.getElementById('cart-installation-addon');
+    if (installBox) {
+        if (hasInstallableProduct) {
+            installBox.style.display = 'block';
+            installBox.innerHTML = `
+                <div class="install-addon-card">
+                    <label class="install-checkbox-label">
+                        <input type="checkbox" id="cart-install-toggle" ${needInstallationService ? 'checked' : ''} onchange="toggleInstallationService(this.checked)">
+                        <div>
+                            <strong>🛠️ घर पर लड़ी लगाने के लिए कारीगर चाहिए?</strong>
+                            <div style="font-size: 0.74rem; color: #166534;">कैमूर में कारीगर सुरक्षित फिटिंग करेंगे (+₹${calculateInstallationFee()})</div>
+                        </div>
+                    </label>
+                </div>
+            `;
+        } else {
+            installBox.style.display = 'none';
+        }
+    }
+
+    // Totals
+    const subtotalEl = document.getElementById('cart-subtotal');
+    const deliveryEl = document.getElementById('cart-delivery-fee');
+    const installRowEl = document.getElementById('cart-install-row');
+    const installFeeEl = document.getElementById('cart-install-fee');
+    const grandTotalEl = document.getElementById('cart-grand-total');
+
+    if (subtotalEl) subtotalEl.innerText = `₹${subtotal}`;
+    if (deliveryEl) deliveryEl.innerText = isFreeDelivery ? 'FREE' : `₹${deliveryFee}`;
+    
+    if (installRowEl && installFeeEl) {
+        if (needInstallationService && installationFee > 0) {
+            installRowEl.style.display = 'flex';
+            installFeeEl.innerText = `₹${installationFee}`;
+        } else {
+            installRowEl.style.display = 'none';
+        }
+    }
+
+    if (grandTotalEl) grandTotalEl.innerText = `₹${grandTotal}`;
+}
+
+// 6. Direct WhatsApp Order Submission
+function openCheckoutModal() {
+    if (cart.length === 0) {
+        showToast("पहले कार्ट में कोई लड़ी जोड़ें!");
+        return;
+    }
+    closeCartDrawer();
+    const modal = document.getElementById('checkout-modal');
+    if (modal) {
+        const { grandTotal, subtotal, deliveryFee, installationFee, isFreeDelivery } = getCartCalculations();
+        document.getElementById('checkout-summary-subtotal').innerText = `₹${subtotal}`;
+        document.getElementById('checkout-summary-delivery').innerText = isFreeDelivery ? 'मुफ़्त (FREE)' : `₹${deliveryFee}`;
+        
+        const chkInstallRow = document.getElementById('checkout-install-row');
+        const chkInstallFee = document.getElementById('checkout-install-fee');
+        if (chkInstallRow && chkInstallFee) {
+            if (needInstallationService && installationFee > 0) {
+                chkInstallRow.style.display = 'flex';
+                chkInstallFee.innerText = `₹${installationFee}`;
+            } else {
+                chkInstallRow.style.display = 'none';
+            }
+        }
+
+        document.getElementById('checkout-summary-total').innerText = `₹${grandTotal}`;
+        modal.classList.add('open');
+
+        trackFBEvent('InitiateCheckout', { value: grandTotal, currency: 'INR' });
+    }
+}
+
+function closeCheckoutModal() {
+    const modal = document.getElementById('checkout-modal');
+    if (modal) modal.classList.remove('open');
+}
+
+function sendWhatsAppOrder(event) {
+    if (event) event.preventDefault();
+
+    const name = document.getElementById('cust-name')?.value.trim();
+    const phone = document.getElementById('cust-phone')?.value.trim();
+    const area = document.getElementById('cust-area')?.value.trim();
+    const address = document.getElementById('cust-address')?.value.trim();
+
+    if (!name || !phone || !area || !address) {
+        alert("कृपया नाम, मोबाइल नंबर, प्रखंड और पता भरें!");
+        return;
+    }
+
+    const { subtotal, deliveryFee, installationFee, isFreeDelivery, grandTotal, totalItems } = getCartCalculations();
+
+    // Fast, crisp message for WhatsApp
+    let message = `🪔 *DIWALI LIGHT ORDER (कैमूर - KAIMUR)* 🪔\n\n`;
+    message += `👤 *ग्राहक विवरण:*\n`;
+    message += `• नाम: ${name}\n`;
+    message += `• मोबाइल: ${phone}\n`;
+    message += `• प्रखंड: ${area}\n`;
+    message += `• पता: ${address}\n`;
+    message += `• भुगतान: कैश ऑन डिलीवरी (COD)\n\n`;
+
+    message += `🛠️ *घर पर लगाने की सर्विस (Fitting):*\n`;
+    if (needInstallationService && installationFee > 0) {
+        message += `👉 *हाँ, मिस्त्री/कारीगर भेजें* (+₹${installationFee})\n\n`;
+    } else {
+        message += `👉 *नहीं, खुद लगाएंगे*\n\n`;
+    }
+
+    message += `📦 *ऑर्डर किए गए उत्पाद (${totalItems} आइटम):*\n`;
+    cart.forEach((cItem, idx) => {
+        const prod = PRODUCTS.find(p => p.id === cItem.id);
+        const itemTitle = prod ? prod.hindiName : "झालर लाइट";
+        message += `${idx + 1}. *${itemTitle}* (${cItem.lengthText}) x ${cItem.qty} = ₹${cItem.price * cItem.qty}\n`;
+    });
+
+    message += `\n💰 *कुल देय राशि (Total Amount): ₹${grandTotal}*\n`;
+    message += `(डिलीवरी: ${isFreeDelivery ? 'मुफ़्त' : '₹' + deliveryFee})\n\n`;
+    message += `🚚 कृपया भभुआ/कैमूर में जल्द डिलीवरी की जानकारी भेजें। धन्यवाद! 🙏`;
+
+    const encoded = encodeURIComponent(message);
+    const waUrl = `https://wa.me/${STORE_CONFIG.whatsappNumber}?text=${encoded}`;
+
+    window.open(waUrl, '_blank');
+    closeCheckoutModal();
+    showToast("व्हाट्सएप खुल रहा है...");
+
+    trackFBEvent('Lead', { value: grandTotal, currency: 'INR' });
+    trackFBEvent('Purchase', { value: grandTotal, currency: 'INR', num_items: totalItems });
+}
+
+// 7. Instant 1-Tap "Buy Now" on WhatsApp
+function buyNowWhatsApp(productId) {
+    const prod = PRODUCTS.find(p => p.id === productId);
+    if (!prod) return;
+
+    const hasVariants = prod.variants && prod.variants.length > 0;
+    const curVariant = hasVariants ? prod.variants[prod.selectedLengthIndex || 0] : null;
+    const price = curVariant ? curVariant.price : prod.price;
+    const lengthText = curVariant ? curVariant.length : prod.specs.length;
+
+    trackFBEvent('Lead', { content_name: `${prod.name} - ${lengthText}`, value: price, currency: 'INR' });
+
+    let message = `🪔 *DIWALI LIGHT DIRECT ORDER (कैमूर)* 🪔\n\n`;
+    message += `नमस्ते! मुझे यह लाइट ऑर्डर करनी है:\n`;
+    message += `⭐ *लाइट:* ${prod.hindiName}\n`;
+    message += `📏 *लंबाई:* ${lengthText}\n`;
+    message += `💰 *रेट:* ₹${price}\n`;
+    if (prod.supportsInstallation) {
+        message += `🛠️ *नोट:* मुझे घर पर लगाने के लिए कारीगर भी चाहिए।\n`;
+    }
+    message += `\nकृपया बताएं कि यह भभुआ/कैमूर में कब तक पहुंचेगी? (कैश ऑन डिलीवरी)`;
+
+    const waUrl = `https://wa.me/${STORE_CONFIG.whatsappNumber}?text=${encodeURIComponent(message)}`;
+    window.open(waUrl, '_blank');
+}
+
+// 8. Drawers and UI Helpers
+function toggleCartDrawer() {
+    const drawer = document.getElementById('cart-drawer');
+    const overlay = document.getElementById('drawer-overlay');
+    if (!drawer) return;
+    drawer.classList.toggle('open');
+    if (overlay) overlay.classList.toggle('open');
+}
+
+function closeCartDrawer() {
+    const drawer = document.getElementById('cart-drawer');
+    const overlay = document.getElementById('drawer-overlay');
+    if (drawer) drawer.classList.remove('open');
+    if (overlay) overlay.classList.remove('open');
+}
+
+function showToast(msg) {
+    const toast = document.getElementById('toast');
+    if (!toast) return;
+    toast.innerText = msg;
+    toast.classList.add('show');
+    setTimeout(() => {
+        toast.classList.remove('show');
+    }, 2400);
+}
+
+function initEventListeners() {
+    const overlay = document.getElementById('drawer-overlay');
+    if (overlay) overlay.addEventListener('click', closeCartDrawer);
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            closeCheckoutModal();
+            closeCartDrawer();
+        }
+    });
+}
